@@ -1,12 +1,12 @@
 {
-  "name": "ComfyUI-LoRAPlotNode",
+  "name": "ComfyUI-LoRAPlotNodeUnlimited",
   "version": "1.0.0",
   "description": "A ComfyUI node for testing multiple LoRAs across different strength values with automatic image labeling",
-  "author": "Hearmeman24",
+  "author": "Hearmeman24, Kartoffel0",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Hearmeman24/ComfyUI-LoRAPlotNode.git"
+    "url": "https://github.com/Kartoffel0/ComfyUI-LoRAPlotNodeUnlimited.git"
   },
   "keywords": [
     "comfyui",
@@ -19,4 +19,3 @@
     "custom_nodes": "."
   }
 }
-

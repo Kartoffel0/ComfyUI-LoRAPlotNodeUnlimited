@@ -1,10 +1,11 @@
-# ComfyUI LoRA Plot Node
+# ComfyUI LoRA Plot Node Unlimited
 
-A custom ComfyUI node for testing multiple LoRA models across different strength values. Automatically generates model/clip pairs for each LoRA-strength combination and includes an image saver node with text overlay for easy identification.
+A custom ComfyUI node for testing multiple LoRA models across different strength values. Automatically generates model/clip pairs for each LoRA-strength combination and includes an image saver node with text overlay for easy identification. Supports up to 50 individual LoRAs or a folder with how many you like.
 
 ## Features
 
 - Test multiple LoRAs with different strength values in a single workflow
+- Unlimited LoRA selection via growing dropdowns or whole-folder selection
 - Automatic generation of model/clip pairs for each combination
 - Image saver node with text overlay showing LoRA name and strength
 - Optimized performance with LoRA dictionary caching
@@ -17,7 +18,7 @@ A custom ComfyUI node for testing multiple LoRA models across different strength
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/Hearmeman24/ComfyUI-LoRAPlotNode.git
+git clone https://github.com/Kartoffel0/ComfyUI-LoRAPlotNodeUnlimited.git
 ```
 
 Then restart ComfyUI.
@@ -30,11 +31,14 @@ Then restart ComfyUI.
 
 1. Add the "LoRA Plot Node" to your workflow
 2. Connect your base model and CLIP
-3. Select up to 10 LoRAs from the dropdown menus
+3. Choose your LoRAs one of two ways (or combine both):
+   - **Dropdowns:** pick a LoRA from `lora_1` and a new `lora_2` dropdown appears below it — keep going for as many as you need, or
+   - **Folder:** pick a LoRA subfolder from the `folder` dropdown to apply every LoRA inside it
 4. Enter comma-separated strength values (e.g., "0.8,0.9,1.0")
 5. Connect the outputs to your KSampler nodes
 
 The node will output:
+
 - Multiple model outputs (one per LoRA-strength combination)
 - Multiple CLIP outputs (one per LoRA-strength combination)
 - Metadata strings for each combination
@@ -55,7 +59,7 @@ The LoRA Plot Node will automatically create multiple model/clip pairs, and Comf
 
 ## Performance Optimizations
 
-- LoRA files are cached in memory (up to 10 LoRAs) to avoid redundant disk I/O
+- LoRA files are cached in memory to avoid redundant disk I/O; the cache is byte-budgeted (a fraction of system RAM) with LRU eviction, so it grows as large as your RAM allows without exhausting it
 - Fonts are cached by size for faster image processing
 - LoRA files are loaded once per LoRA, not per strength value
 
@@ -69,4 +73,3 @@ The LoRA Plot Node will automatically create multiple model/clip pairs, and Comf
 ## License
 
 MIT
-

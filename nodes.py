@@ -8,23 +8,45 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import torch
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 class LoRAPlotNode:
     """
     A ComfyUI node that takes multiple LoRAs and strength values,
     applies each combination to the base model/clip, and outputs
     multiple model/clip pairs for downstream processing.
     """
-    # Class-level cache for LoRA dictionaries to avoid reloading
+    # Class-level cache for LoRA dictionaries to avoid reloading.
+    # Insertion-ordered: least-recently-used entries sit at the front.
     _lora_cache = {}
-    _cache_max_size = 10  # Limit cache size to prevent memory issues
+    # Byte size of each cached LoRA, keyed identically to _lora_cache.
+    _lora_sizes = {}
+
+    # Memory budget for the cache, as a fraction of total system RAM,
+    # clamped to a sane floor/ceiling. Eviction is LRU within this budget.
+    _cache_ram_fraction = 0.25
+    _cache_min_bytes = 1 << 30   # 1 GiB
+    _cache_max_bytes = 8 << 30   # 8 GiB
+
+    # Upper bound on the individual LoRA dropdowns. The frontend grows the
+    # visible list dynamically (web/lora_plot.js); this only caps the max.
+    MAX_LORAS = 50
     
     @classmethod
     def INPUT_TYPES(cls):
         # Get list of available LoRAs
         loras = folder_paths.get_filename_list("loras")
-        # Add "None" option to the beginning
-        lora_selections = ["None"] + loras
-        
+
+        # Distinct LoRA subfolders (relative paths), for bulk folder selection.
+        folders = sorted({
+            os.path.dirname(name) for name in loras if os.path.dirname(name)
+        })
+
+        lora_choices = ["None"] + loras
+
         inputs = {
             "required": {
                 "model": ("MODEL",),
@@ -33,14 +55,20 @@ class LoRAPlotNode:
                     "multiline": False,
                     "default": "0.8,0.9,1.0"
                 }),
+                "folder": (["None"] + folders, {
+                    "default": "None",
+                    "tooltip": "Select a LoRA subfolder to apply every LoRA inside it."
+                }),
             },
-            "optional": {}
+            "optional": {},
         }
-        
-        # Add 10 LoRA selectors with default "None"
-        for i in range(1, 11):
-            inputs["optional"][f"lora_{i}"] = (lora_selections, {"default": "None"})
-            
+
+        # Individually selected LoRAs (dropdowns grow as you fill them, via
+        # web/lora_plot.js). Declared up front so the backend always accepts
+        # them; the frontend hides the unused slots.
+        for i in range(1, cls.MAX_LORAS + 1):
+            inputs["optional"][f"lora_{i}"] = (lora_choices, {"default": "None"})
+
         return inputs
     
     RETURN_TYPES = ("MODEL", "CLIP", "STRING")
@@ -49,17 +77,12 @@ class LoRAPlotNode:
     FUNCTION = "apply_loras"
     CATEGORY = "LoRA"
     
-    def apply_loras(self, model, clip, strengths, lora_1="None", lora_2="None", lora_3="None", 
-                    lora_4="None", lora_5="None", lora_6="None", lora_7="None", 
-                    lora_8="None", lora_9="None", lora_10="None"):
+    def apply_loras(self, model, clip, strengths, folder="None", **kwargs):
         """
         Apply multiple LoRAs with different strength values.
         """
-        # Collect all selected LoRAs
-        lora_list = []
-        for lora_name in [lora_1, lora_2, lora_3, lora_4, lora_5, lora_6, lora_7, lora_8, lora_9, lora_10]:
-            if lora_name and lora_name != "None":
-                lora_list.append(lora_name)
+        # Collect all selected LoRAs (individual dropdowns + optional whole-folder selection)
+        lora_list = self._collect_loras(kwargs, folder)
         
         # Parse strength values
         try:
@@ -97,18 +120,16 @@ class LoRAPlotNode:
                 # OPTIMIZATION: Check cache first, load only if not cached
                 if lora_name in self._lora_cache:
                     print(f"[LoRAPlotNode] Using cached LoRA: '{lora_name}'")
-                    lora_dict = self._lora_cache[lora_name]
+                    # Refresh LRU position (move to the back of the insertion order)
+                    lora_dict = self._lora_cache.pop(lora_name)
+                    self._lora_cache[lora_name] = lora_dict
                 else:
                     print(f"[LoRAPlotNode] Loading LoRA into RAM: '{lora_name}'")
                     lora_dict = comfy.utils.load_torch_file(lora_path, safe_load=True)
-                    
-                    # Add to cache (with size limit to prevent memory issues)
-                    if len(self._lora_cache) >= self._cache_max_size:
-                        # Remove oldest entry (simple FIFO eviction)
-                        oldest_key = next(iter(self._lora_cache))
-                        del self._lora_cache[oldest_key]
-                        print(f"[LoRAPlotNode] Evicted '{oldest_key}' from cache (max size: {self._cache_max_size})")
+
                     self._lora_cache[lora_name] = lora_dict
+                    self._lora_sizes[lora_name] = self._lora_size_bytes(lora_dict)
+                    self._trim_cache()
                 
                 # Cache sanitized filename (used for all strengths of this LoRA)
                 sanitized_lora = self._sanitize_filename(lora_name)
@@ -158,6 +179,96 @@ class LoRAPlotNode:
                 raise ValueError(f"No LoRA-strength combinations were successfully applied. {error_details}")
         
         return (models_output, clips_output, metadata_output)
+    
+    def _collect_loras(self, kwargs, folder):
+        """
+        Combine individually selected LoRAs (lora_1, lora_2, ...) and an
+        optional whole-folder selection into a single, de-duplicated,
+        ordered list.
+        """
+        all_loras = folder_paths.get_filename_list("loras")
+        all_set = set(all_loras)
+
+        names = []
+
+        # Individually selected LoRAs, in order.
+        for i in range(1, self.MAX_LORAS + 1):
+            name = kwargs.get(f"lora_{i}")
+            if name and name != "None":
+                names.append(self._resolve_lora_name(name, all_loras, all_set))
+
+        # Whole-folder selection.
+        if folder and folder != "None":
+            folder = folder.strip("/\\")
+            names.extend(
+                name for name in all_loras if os.path.dirname(name) == folder
+            )
+
+        # De-duplicate while preserving order.
+        seen = set()
+        unique = []
+        for name in names:
+            if name not in seen:
+                seen.add(name)
+                unique.append(name)
+        return unique
+
+    def _resolve_lora_name(self, name, all_loras, all_set):
+        """
+        Resolve a user-entered LoRA name to its relative path. Accepts the
+        exact relative path or a bare filename (unique match).
+        """
+        if name in all_set:
+            return name
+        base = os.path.basename(name)
+        matches = [n for n in all_loras if os.path.basename(n) == base]
+        if len(matches) == 1:
+            return matches[0]
+        return name  # unresolved; reported later by existence check
+    
+    @classmethod
+    def _cache_budget(cls):
+        """
+        Byte budget for the LoRA cache: a fraction of total system RAM,
+        clamped to a sane floor/ceiling.
+        """
+        if psutil is None:
+            return cls._cache_max_bytes
+        try:
+            total = psutil.virtual_memory().total
+        except Exception:
+            return cls._cache_max_bytes
+        budget = int(total * cls._cache_ram_fraction)
+        return max(cls._cache_min_bytes, min(cls._cache_max_bytes, budget))
+
+    @classmethod
+    def _lora_size_bytes(cls, lora_dict):
+        """
+        Approximate in-memory size of a loaded LoRA dict (bytes).
+        """
+        total = 0
+        for value in lora_dict.values():
+            if hasattr(value, "numel") and hasattr(value, "element_size"):
+                total += int(value.numel()) * int(value.element_size())
+        return total
+
+    @classmethod
+    def _trim_cache(cls):
+        """
+        Evict least-recently-used LoRAs until the cache fits its byte
+        budget. Always keeps at least one entry so a single oversized
+        LoRA is never discarded right after being loaded.
+        """
+        budget = cls._cache_budget()
+        total = sum(cls._lora_sizes.values())
+        while total > budget and len(cls._lora_cache) > 1:
+            oldest = next(iter(cls._lora_cache))
+            del cls._lora_cache[oldest]
+            total -= cls._lora_sizes.pop(oldest, 0)
+            print(
+                f"[LoRAPlotNode] Evicted '{oldest}' from cache "
+                f"({total} / {budget} bytes in use)"
+            )
     
     def _sanitize_filename(self, filename):
         """

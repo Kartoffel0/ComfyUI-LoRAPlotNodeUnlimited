@@ -6,9 +6,11 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "LoRAPlotNode": "LoRA Plot Node",
-    "LoRAPlotImageSaver": "LoRA Plot Image Saver"
+    "LoRAPlotNode": "LoRA Plot Node Unlimited",
+    "LoRAPlotImageSaver": "LoRA Plot Image Saver Unlimited"
 }
 
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+WEB_DIRECTORY = "./web"
+
+__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']
 
