@@ -30,7 +30,7 @@ Then restart ComfyUI.
 ### LoRA Plot Node
 
 1. Add the "LoRA Plot Node" to your workflow
-2. Connect your base model and CLIP
+2. Connect your base model (and CLIP, if your LoRAs modify it — CLIP is optional)
 3. Choose your LoRAs one of two ways (or combine both):
    - **Dropdowns:** pick a LoRA from `lora_1` and a new `lora_2` dropdown appears below it — keep going for as many as you need, or
    - **Folder:** pick a LoRA subfolder from the `folder` dropdown to apply every LoRA inside it
@@ -42,6 +42,10 @@ The node will output:
 - Multiple model outputs (one per LoRA-strength combination)
 - Multiple CLIP outputs (one per LoRA-strength combination)
 - Metadata strings for each combination
+
+### Chaining multiple plot nodes
+
+Connect the `metadata` output of one plot node to the `metadata` input of the next. The downstream node prefixes its own LoRA/strength to the incoming metadata, so the image saver shows the full chain (e.g. `lora_a_0.8 + lora_b_0.5`). Chain as many as you like; the final plot node's `metadata` carries every LoRA in the chain.
 
 ### LoRA Plot Image Saver
 

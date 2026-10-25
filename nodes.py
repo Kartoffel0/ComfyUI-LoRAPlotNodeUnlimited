@@ -50,7 +50,6 @@ class LoRAPlotNode:
         inputs = {
             "required": {
                 "model": ("MODEL",),
-                "clip": ("CLIP",),
                 "strengths": ("STRING", {
                     "multiline": False,
                     "default": "0.8,0.9,1.0"
@@ -60,7 +59,10 @@ class LoRAPlotNode:
                     "tooltip": "Select a LoRA subfolder to apply every LoRA inside it."
                 }),
             },
-            "optional": {},
+            "optional": {
+                "clip": ("CLIP",),
+                "metadata": ("STRING", {"forceInput": True}),
+            },
         }
 
         # Individually selected LoRAs (dropdowns grow as you fill them, via
@@ -77,12 +79,21 @@ class LoRAPlotNode:
     FUNCTION = "apply_loras"
     CATEGORY = "LoRA"
     
-    def apply_loras(self, model, clip, strengths, folder="None", **kwargs):
+    def apply_loras(self, model, strengths="0.8,0.9,1.0", folder="None", metadata=None, clip=None, **kwargs):
         """
         Apply multiple LoRAs with different strength values.
         """
         # Collect all selected LoRAs (individual dropdowns + optional whole-folder selection)
         lora_list = self._collect_loras(kwargs, folder)
+
+        # Metadata from an upstream plot node (chained). Prefixed to this
+        # node's own metadata so downstream images show the full LoRA chain.
+        meta_prefix = ""
+        if metadata:
+            if isinstance(metadata, list):
+                metadata = metadata[0] if metadata else ""
+            if metadata:
+                meta_prefix = f"{metadata} + "
         
         # Parse strength values
         try:
@@ -146,7 +157,7 @@ class LoRAPlotNode:
                         clips_output.append(clip_lora)
                         
                         # Generate metadata string using cached sanitized name
-                        metadata = f"{sanitized_lora}_{strength}"
+                        metadata = f"{meta_prefix}{sanitized_lora}_{strength}"
                         metadata_output.append(metadata)
                         
                     except Exception as e_inner:
@@ -388,20 +399,7 @@ class LoRAPlotImageSaver:
             img_np = (img_np * 255).astype(np.uint8)
             pil_image = Image.fromarray(img_np)
             
-            # Parse metadata: format is "lora_name_strength"
-            # Split on last underscore to separate name and strength
-            parts = meta.rsplit('_', 1)
-            if len(parts) == 2:
-                lora_name, strength = parts
-            else:
-                lora_name = meta
-                strength = ""
-            
-            # Format text: "LoRA Name\nStrength: 0.8"
-            if strength:
-                overlay_text = f"{lora_name}\nStrength: {strength}"
-            else:
-                overlay_text = lora_name
+            overlay_text = self._metadata_to_text(meta)
             
             # Create overlay
             pil_image = self._add_text_overlay(
@@ -418,6 +416,24 @@ class LoRAPlotImageSaver:
             output_images.append(img_tensor)
         
         return (output_images,)
+    
+    def _metadata_to_text(self, meta):
+        """
+        Convert a metadata string into overlay text. Chained plot nodes join
+        entries with " + "; each entry is "lora_name_strength" (strength is
+        the last part, since names may themselves contain underscores).
+        """
+        entries = meta.split(" + ")
+        lines = []
+        for entry in entries:
+            parts = entry.rsplit('_', 1)
+            if len(parts) == 2 and parts[0] and parts[1]:
+                name, strength = parts
+                lines.append(name)
+                lines.append(f"Strength: {strength}")
+            else:
+                lines.append(entry)
+        return "\n".join(lines)
     
     # Candidate scalable font paths, in priority order, covering Linux, macOS and Windows.
     _FONT_CANDIDATES = [
